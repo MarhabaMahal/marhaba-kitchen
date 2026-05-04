@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marhaba Mahal — Kitchen Display</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  :root {
+    --green: #1a6b3c;
+    --green-mid: #2e8b57;
+    --bg: #0f0f0f;
+    --surface: #1a1a1a;
+    --surface2: #242424;
+    --border: #2e2e2e;
+    --text: #f0f0f0;
+    --muted: #888;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); font-family: 'IBM Plex Sans', sans-serif; color: var(--text); min-height: 100vh; }
+
+  /* Flash overlay */
+  #flash-overlay {
+    position: fixed; inset: 0;
+    background: rgba(192,57,43,0.25);
+    pointer-events: none; opacity: 0;
+    transition: opacity 0.1s; z-index: 999;
+  }
+  #flash-overlay.active { opacity: 1; }
+
+  /* Busy overlay */
+  #busy-overlay {
+    position: fixed; inset: 0;
+    background: rgba(220,38,38,0.92);
+    z-index: 998; display: none;
+    flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px;
+  }
+  #busy-overlay.show { display: flex; }
+  #busy-overlay h1 { font-size: 48px; font-weight: 700; color: #fff; letter-spacing: 0.02em; }
+  #busy-overlay p { font-size: 20px; color: rgba(255,255,255,0.85); }
+  #busy-overlay .close-busy {
+    margin-top: 24px; background: rgba(255,255,255,0.15);
+    border: 2px solid rgba(255,255,255,0.4); color: #fff;
+    padding: 12px 32px; border-radius: 10px; font-size: 15px;
+    cursor: pointer; font-family: 'IBM Plex Sans', sans-serif;
+  }
+  #busy-overlay .close-busy:hover { background: rgba(255,255,255,0.25); }
+
+  /* Header */
+  .header {
+    background: var(--green); padding: 0 24px; height: 58px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .header-left { display: flex; align-items: center; gap: 12px; }
+  .brand { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+  .live-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; animation: blink 2s infinite; }
+  .live-dot.alert { background: #f87171; animation: blink 0.4s infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .clock { font-family: 'IBM Plex Mono', monospace; font-size: 14px; opacity: 0.85; }
+  .pending-badge { background: #f87171; color: #fff; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; display: none; }
+  .pending-badge.show { display: block; }
+
+  /* Busy toggle button */
+  .busy-btn {
+    display: flex; align-items: center; gap: 8px;
+    background: rgba(255,255,255,0.12); border: 1.5px solid rgba(255,255,255,0.25);
+    color: #fff; padding: 6px 14px; border-radius: 8px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+    font-family: 'IBM Plex Sans', sans-serif; transition: all 0.2s;
+    letter-spacing: 0.02em;
+  }
+  .busy-btn:hover { background: rgba(255,255,255,0.2); }
+  .busy-btn.busy-on { background: #dc2626; border-color: #ef4444; }
+  .busy-btn .dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; transition: background 0.2s; }
+  .busy-btn.busy-on .dot { background: #fff; animation: blink 0.5s infinite; }
+
+  /* Status bar */
+  .status-bar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 8px 24px; display: flex; gap: 24px; font-size: 12px; color: var(--muted);
+  }
+  .stat { display: flex; align-items: center; gap: 6px; }
+  .stat-num { font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 14px; }
+  .stat-num.green { color: #4ade80; }
+  .stat-num.amber { color: #fbbf24; }
+  .stat-num.red { color: #f87171; }
+  .refresh-info { margin-left: auto; }
+
+  /* Main grid */
+  .main { padding: 20px 24px; display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; align-items: start; }
+
+  .empty { grid-column: 1/-1; text-align: center; padding: 80px 20px; color: var(--muted); }
+  .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.3; }
+  .empty h2 { font-size: 18px; font-weight: 500; margin-bottom: 8px; }
+  .empty p { font-size: 13px; }
+
+  /* Order card */
+  .order-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; transition: border-color 0.3s; }
+  .order-card.new-order { border-color: #f87171; animation: card-flash 0.5s ease-in-out 4; }
+  @keyframes card-flash { 0%,100%{border-color:#f87171;background:var(--surface)} 50%{border-color:#fca5a5;background:#2a1515} }
+  .order-card.approved { opacity: 0.45; border-color: #166534; }
+  .order-card.rejected { opacity: 0.35; border-color: #7f1d1d; }
+
+  .card-header { padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); background: var(--surface2); }
+  .order-id { font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600; color: #4ade80; }
+  .new-badge { background: #f87171; color: #fff; font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 20px; letter-spacing: 0.05em; animation: blink 0.5s infinite; }
+  .type-badge { font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; letter-spacing: 0.04em; }
+  .type-delivery { background: #1e3a5f; color: #60a5fa; }
+  .type-takeaway { background: #2d1b4e; color: #c084fc; }
+
+  .card-body { padding: 14px 16px; }
+  .customer-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .customer-name { font-size: 15px; font-weight: 600; }
+  .time-ago { font-size: 11px; color: #fbbf24; font-family: 'IBM Plex Mono', monospace; }
+  .phone { font-size: 12px; color: var(--muted); margin-bottom: 6px; font-family: 'IBM Plex Mono', monospace; }
+  .address { font-size: 12px; color: #93c5fd; margin-bottom: 10px; display: flex; align-items: flex-start; gap: 4px; }
+  .divider { height: 1px; background: var(--border); margin: 10px 0; }
+  .items-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 6px; }
+  .items-list { display: flex; flex-direction: column; gap: 3px; }
+  .item-row { font-size: 13px; color: var(--text); display: flex; gap: 8px; }
+  .item-qty { color: #fbbf24; font-weight: 600; min-width: 24px; font-family: 'IBM Plex Mono', monospace; }
+  .notes-row { margin-top: 8px; background: #2a2000; border-left: 3px solid #fbbf24; border-radius: 0 6px 6px 0; padding: 6px 10px; font-size: 12px; color: #fde68a; }
+  .total-row { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .total-label { font-size: 12px; color: var(--muted); }
+  .total-amount { font-family: 'IBM Plex Mono', monospace; font-size: 16px; font-weight: 600; color: #4ade80; }
+
+  /* Card actions */
+  .card-actions { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); }
+  .btn { border: none; border-radius: 8px; padding: 10px 0; font-size: 13px; font-weight: 600; cursor: pointer; flex: 1; transition: all 0.15s; font-family: 'IBM Plex Sans', sans-serif; letter-spacing: 0.02em; }
+  .btn-approve { background: #166534; color: #4ade80; }
+  .btn-approve:hover { background: #15803d; }
+  .btn-reject { background: #7f1d1d; color: #fca5a5; }
+  .btn-reject:hover { background: #991b1b; }
+  .btn-print { background: var(--surface2); color: #93c5fd; border: 1px solid #1e3a5f; flex: 0 0 auto; padding: 10px 14px; font-size: 13px; }
+  .btn-print:hover { background: #1e3a5f; }
+
+  /* Print styles */
+  @media print {
+    body * { visibility: hidden; }
+    #print-area, #print-area * { visibility: visible; }
+    #print-area {
+      position: fixed; top: 0; left: 0; width: 100%;
+      background: #fff; color: #000; padding: 0;
+    }
+  }
+
+  /* Hidden print area */
+  #print-area { display: none; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div id="flash-overlay"></div>
+
+<!-- Busy Mode Overlay -->
+<div id="busy-overlay">
+  <div style="font-size:64px;">🚫</div>
+  <h1>KITCHEN IS BUSY</h1>
+  <p>New orders are currently paused. Customers are being notified.</p>
+  <button class="close-busy" onclick="toggleBusy()">Turn Off Busy Mode</button>
+</div>
+
+<!-- Hidden Print Area -->
+<div id="print-area"></div>
+
+<div class="header">
+  <div class="header-left">
+    <div class="live-dot" id="liveDot"></div>
+    <span class="brand">Marhaba Mahal — Kitchen Display</span>
+  </div>
+  <div class="header-right">
+    <button class="busy-btn" id="busyBtn" onclick="toggleBusy()">
+      <span class="dot"></span>
+      <span id="busyLabel">OPEN</span>
+    </button>
+    <span id="pendingBadge" class="pending-badge"></span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+</div>
+
+<div class="status-bar">
+  <div class="stat"><span class="stat-num amber" id="statPending">0</span><span>Pending</span></div>
+  <div class="stat"><span class="stat-num green" id="statApproved">0</span><span>Approved today</span></div>
+  <div class="stat"><span class="stat-num red" id="statRejected">0</span><span>Rejected</span></div>
+  <div class="stat"><span style="font-size:12px;color:#c084fc;font-weight:600;" id="tabLabel">--</span></div><div class="stat refresh-info" id="lastRefresh">Connecting...</div>
+</div>
+
+<div class="main" id="ordersGrid">
+  <div class="empty"><div class="empty-icon">⏳</div><h2>Connecting...</h2></div>
+</div>
+
+<script>
+const SETTINGS_SHEET_ID = "1WeefV9wndjl9HP9B2iVGyrFi91qOzdOI9vYCLyAJcYg";
+const SETTINGS_URL = `https://docs.google.com/spreadsheets/d/${SETTINGS_SHEET_ID}/gviz/tq?tqx=out:json&gid=870267070`;
+
+let knownOrderIds = new Set();
+let allOrders = [];
+let isFirstLoad = true;
+let isBusy = localStorage.getItem("kitchenBusy") === "true";
+let todaySheetId = null;
+let currentTab = null;
+let returningCustomers = new Set();
+
+async function checkReturningCustomers(orders) {
+  const phones = [...new Set(orders.map(o => String(o.phone).trim()).filter(Boolean))];
+  for (const phone of phones) {
+    try {
+      const res = await fetch(`${APPS_SCRIPT_URL}?action=checkCustomer&phone=${encodeURIComponent(phone)}`);
+      const text = await res.text();
+      if (text.trim() === "RETURNING") returningCustomers.add(phone);
+    } catch(e) {}
+  }
+}
+
+function getCurrentTab() {
+  const now = new Date();
+  const karachi = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Karachi"}));
+  const hour = karachi.getHours();
+  return (hour >= 7 && hour < 14) ? "Breakfast Menu" : "Dinner Menu";
+}
+
+async function getTodaySheetId() {
+  try {
+    const res = await fetch(SETTINGS_URL + "&t=" + Date.now());
+    const text = await res.text();
+    const json = JSON.parse(text.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
+    const rows = json.table.rows;
+    // Search for the row where column A = "TodaySheetID"
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      if (row.c && row.c[0] && row.c[0].v) {
+        const key = String(row.c[0].v).trim();
+        if (key === "TodaySheetID" && row.c[1] && row.c[1].v) {
+          return String(row.c[1].v).trim();
+        }
+      }
+    }
+  } catch(e) { console.error("getTodaySheetId error:", e); }
+  return null;
+}
+
+// Apply busy state on load
+if (isBusy) applyBusyUI(true);
+
+async function toggleBusy() {
+  isBusy = !isBusy;
+  localStorage.setItem("kitchenBusy", isBusy);
+  applyBusyUI(isBusy);
+  try {
+    await fetch(`${APPS_SCRIPT_URL}?action=setBusy&value=${isBusy ? "BUSY" : "OPEN"}`, {mode:"no-cors"});
+  } catch(e) {}
+}
+
+function applyBusyUI(busy) {
+  const btn = document.getElementById("busyBtn");
+  const label = document.getElementById("busyLabel");
+  const overlay = document.getElementById("busy-overlay");
+  if (busy) {
+    btn.classList.add("busy-on");
+    label.textContent = "BUSY";
+    overlay.classList.add("show");
+  } else {
+    btn.classList.remove("busy-on");
+    label.textContent = "OPEN";
+    overlay.classList.remove("show");
+  }
+}
+
+function getCellValue(cell) {
+  if (!cell || cell.v === null || cell.v === undefined) return "";
+  return String(cell.v);
+}
+
+async function fetchOrders() {
+  try {
+    todaySheetId = await getTodaySheetId();
+    if (!todaySheetId) {
+      document.getElementById("lastRefresh").textContent = "No daily sheet found — check Settings B3";
+      return;
+    }
+    currentTab = getCurrentTab();
+    const SHEET_URL = `https://docs.google.com/spreadsheets/d/${todaySheetId}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(currentTab)}`;
+    document.getElementById("tabLabel").textContent = currentTab;
+    const res = await fetch(SHEET_URL + "&t=" + Date.now());
+    const text = await res.text();
+    const json = JSON.parse(text.replace(/^[^{]*/, "").replace(/[^}]*$/, ""));
+    const rows = json.table.rows;
+
+    const orders = rows.map(row => ({
+      id:        getCellValue(row.c[0]),
+      name:      getCellValue(row.c[1]),
+      phone:     getCellValue(row.c[2]),
+      type:      getCellValue(row.c[3]),
+      address:   getCellValue(row.c[4]),
+      items:     getCellValue(row.c[5]),
+      status:    getCellValue(row.c[6]),
+      timestamp: row.c[7],
+      total:     getCellValue(row.c[8]),
+      notes:     getCellValue(row.c[9]),
+    })).filter(o => o.id && o.name);
+
+    const newOrders = orders.filter(o => o.status === "PENDING" && !knownOrderIds.has(o.id));
+    if (!isFirstLoad && newOrders.length > 0) triggerAlert();
+    orders.forEach(o => knownOrderIds.add(o.id));
+    allOrders = orders;
+    isFirstLoad = false;
+
+    await checkReturningCustomers(orders);
+    await checkReturningCustomers(orders);
+    renderOrders(orders);
+    updateStats(orders);
+    document.getElementById("lastRefresh").textContent = "Updated: " + new Date().toLocaleTimeString("en-PK");
+  } catch (err) {
+    document.getElementById("lastRefresh").textContent = "Error — retrying...";
+  }
+}
+
+function timeAgo(tsObj) {
+  if (!tsObj || !tsObj.v) return "";
+  try {
+    const match = String(tsObj.v).match(/Date\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)/);
+    if (!match) return "";
+    const d = new Date(+match[1], +match[2], +match[3], +match[4], +match[5], +match[6]);
+    const secs = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (secs < 60) return secs + "s ago";
+    if (secs < 3600) return Math.floor(secs/60) + "m ago";
+    return Math.floor(secs/3600) + "h ago";
+  } catch { return ""; }
+}
+
+function formatTimestamp(tsObj) {
+  if (!tsObj || !tsObj.v) return "";
+  try {
+    const match = String(tsObj.v).match(/Date\((\d+),(\d+),(\d+),(\d+),(\d+),(\d+)\)/);
+    if (!match) return "";
+    const d = new Date(+match[1], +match[2], +match[3], +match[4], +match[5], +match[6]);
+    return d.toLocaleString("en-PK", {day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"});
+  } catch { return ""; }
+}
+
+function parseItems(itemsStr) {
+  if (!itemsStr) return [];
+  return itemsStr.split(",").map(i => i.trim()).filter(Boolean);
+}
+
+function printReceipt(order) {
+  const items = parseItems(order.items);
+  const timestamp = formatTimestamp(order.timestamp);
+  const printContent = `
+    <div style="font-family:Arial,sans-serif;max-width:320px;margin:0 auto;padding:20px;color:#000;">
+      <div style="text-align:center;border-bottom:2px solid #000;padding-bottom:12px;margin-bottom:12px;">
+        <h2 style="font-size:20px;font-weight:700;margin:0;">MARHABA MAHAL</h2>
+        <p style="font-size:11px;margin:4px 0 0;color:#555;">Order Receipt</p>
+      </div>
+
+      <div style="font-size:12px;margin-bottom:12px;display:flex;justify-content:space-between;">
+        <span><strong>Order #${order.id}</strong></span>
+        <span>${timestamp}</span>
+      </div>
+
+      <div style="border:1px solid #ddd;border-radius:6px;padding:10px;margin-bottom:12px;font-size:13px;">
+        <div style="margin-bottom:4px;"><strong>Customer:</strong> ${order.name}</div>
+        <div style="margin-bottom:4px;"><strong>Phone:</strong> ${order.phone}</div>
+        <div style="margin-bottom:4px;"><strong>Type:</strong> ${order.type}</div>
+        ${order.address ? `<div><strong>Address:</strong> ${order.address}</div>` : ""}
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#666;margin-bottom:6px;">Order Items</div>
+        <table style="width:100%;font-size:13px;border-collapse:collapse;">
+          ${items.map(item => {
+            const parts = item.match(/^(\d+x?\s*)(.*)/i);
+            return `<tr>
+              <td style="padding:4px 0;color:#b45309;font-weight:600;width:32px;">${parts ? parts[1].trim() : ""}</td>
+              <td style="padding:4px 0;">${parts ? parts[2] : item}</td>
+            </tr>`;
+          }).join("")}
+        </table>
+      </div>
+
+      ${order.notes ? `<div style="background:#fffbeb;border-left:3px solid #f59e0b;padding:6px 10px;font-size:12px;margin-bottom:12px;border-radius:0 4px 4px 0;"><strong>Note:</strong> ${order.notes}</div>` : ""}
+
+      <div style="border-top:2px solid #000;padding-top:10px;display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-size:14px;font-weight:600;">TOTAL</span>
+        <span style="font-size:20px;font-weight:700;">PKR ${Number(order.total||0).toLocaleString()}</span>
+      </div>
+
+      <div style="text-align:center;margin-top:16px;font-size:11px;color:#888;">
+        Shukriya! Thank you for choosing Marhaba Mahal 🍽️
+      </div>
+    </div>
+  `;
+
+  const printWin = window.open("", "_blank", "width=400,height=600");
+  printWin.document.write(`
+    <!DOCTYPE html><html><head>
+    <title>Receipt - ${order.name}</title>
+    <style>body{margin:0;padding:20px;} @media print{body{padding:0;}}</style>
+    </head><body>${printContent}
+    <script>window.onload=function(){window.print();}<\/script>
+    </body></html>
+  `);
+  printWin.document.close();
+}
+
+function renderOrders(orders) {
+  const grid = document.getElementById("ordersGrid");
+  const sorted = [...orders].sort((a,b) => {
+    if (a.status === "PENDING" && b.status !== "PENDING") return -1;
+    if (b.status === "PENDING" && a.status !== "PENDING") return 1;
+    return 0;
+  });
+
+  if (sorted.length === 0) {
+    grid.innerHTML = `<div class="empty"><div class="empty-icon">✓</div><h2>All caught up</h2><p>No orders yet. Refreshing every 10 seconds.</p></div>`;
+    return;
+  }
+
+  grid.innerHTML = sorted.slice(0,20).map(o => {
+    const items = parseItems(o.items);
+    const cardClass = o.status === "APPROVED" ? "approved" : o.status === "REJECTED" ? "rejected" : "";
+    const safeOrder = encodeURIComponent(JSON.stringify(o));
+
+    return `
+    <div class="order-card ${cardClass}" id="card-${o.id}">
+      <div class="card-header">
+        <span class="order-id">#${o.id}</span>
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${returningCustomers.has(String(o.phone).trim()) ? '<span style="font-size:10px;background:#1a3a5c;color:#60a5fa;padding:2px 8px;border-radius:20px;font-weight:600;">Returning ♻️</span>' : ""}
+          ${o.status === "PENDING" ? '<span class="new-badge">NEW</span>' : ""}
+          <span class="type-badge ${o.type === "Delivery" ? "type-delivery" : "type-takeaway"}">${o.type || "Takeaway"}</span>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="customer-row">
+          <span class="customer-name">${o.name}</span>
+          <span class="time-ago">${timeAgo(o.timestamp)}</span>
+        </div>
+        <div class="phone">${o.phone}</div>
+        ${o.address ? `<div class="address">📍 ${o.address}</div>` : ""}
+        <div class="divider"></div>
+        <div class="items-label">Order</div>
+        <div class="items-list">
+          ${items.map(item => {
+            const parts = item.match(/^(\d+x?\s*)(.*)/i);
+            return parts
+              ? `<div class="item-row"><span class="item-qty">${parts[1].trim()}</span><span>${parts[2]}</span></div>`
+              : `<div class="item-row"><span>${item}</span></div>`;
+          }).join("")}
+        </div>
+        ${o.notes ? `<div class="notes-row">Note: ${o.notes}</div>` : ""}
+        <div class="total-row">
+          <span class="total-label">Total</span>
+          <span class="total-amount">PKR ${Number(o.total||0).toLocaleString()}</span>
+        </div>
+      </div>
+      <div class="card-actions">
+        ${o.status === "PENDING" ? `
+          <button class="btn btn-approve" onclick="updateStatus('${o.id}', 'APPROVED', this)">Approve</button>
+          <button class="btn btn-reject" onclick="updateStatus('${o.id}', 'REJECTED', this)">Reject</button>
+        ` : `
+          <span style="font-size:12px;color:${o.status==='APPROVED'?'#4ade80':'#f87171'};flex:1;text-align:center;padding:10px 0;">
+            ${o.status === "APPROVED" ? "✓ Approved" : "✗ Rejected"}
+          </span>
+        `}
+        <button class="btn btn-print" onclick='printReceipt(${JSON.stringify(o).replace(/'/g,"&#39;")})'>🖨️ Print</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function updateStats(orders) {
+  const pending = orders.filter(o => o.status === "PENDING").length;
+  const approved = orders.filter(o => o.status === "APPROVED").length;
+  const rejected = orders.filter(o => o.status === "REJECTED").length;
+  document.getElementById("statPending").textContent = pending;
+  document.getElementById("statApproved").textContent = approved;
+  document.getElementById("statRejected").textContent = rejected;
+  const badge = document.getElementById("pendingBadge");
+  if (pending > 0) { badge.textContent = pending + " pending"; badge.classList.add("show"); document.getElementById("liveDot").classList.add("alert"); }
+  else { badge.classList.remove("show"); document.getElementById("liveDot").classList.remove("alert"); }
+}
+
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwdWns4n3O3pDkTqIXLRMQ7YkYSgwZMnGB_rRnAWL_LBaFQpU0GyuFsz6QyAl9qd8nIQw/exec";
+
+async function updateStatus(orderId, newStatus, btn) {
+  btn.disabled = true;
+  btn.textContent = "Updating...";
+  try {
+    await fetch(`${APPS_SCRIPT_URL}?orderId=${orderId}&status=${newStatus}`, {mode:"no-cors"});
+    const card = document.getElementById("card-" + orderId);
+    if (card) card.classList.add(newStatus === "APPROVED" ? "approved" : "rejected");
+    setTimeout(fetchOrders, 2000);
+  } catch {
+    alert("Could not update — please update the sheet manually.");
+    btn.disabled = false;
+    btn.textContent = newStatus === "APPROVED" ? "Approve" : "Reject";
+  }
+}
+
+function triggerAlert() {
+  const overlay = document.getElementById("flash-overlay");
+  let flashes = 0;
+  const iv = setInterval(() => {
+    overlay.classList.toggle("active");
+    if (++flashes >= 8) { clearInterval(iv); overlay.classList.remove("active"); }
+  }, 250);
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    for (let i = 0; i < 3; i++) {
+      const osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.frequency.value = 880; osc.type = "square";
+      gain.gain.setValueAtTime(0.3, ctx.currentTime + i*0.4);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i*0.4 + 0.3);
+      osc.start(ctx.currentTime + i*0.4);
+      osc.stop(ctx.currentTime + i*0.4 + 0.35);
+    }
+  } catch(e) {}
+}
+
+function updateClock() {
+  document.getElementById("clock").textContent =
+    new Date().toLocaleTimeString("en-PK", {hour:"2-digit",minute:"2-digit",second:"2-digit"});
+}
+
+fetchOrders();
+setInterval(fetchOrders, 10000);
+setInterval(updateClock, 1000);
+updateClock();
+</script>
+</body>
+</html>
